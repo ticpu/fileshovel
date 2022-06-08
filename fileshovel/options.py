@@ -4,17 +4,24 @@ import argparse
 import logging
 import platform
 import re
-from typing import List, Optional
+import sys
+from typing import List, Optional, TextIO
 
 from fileshovel.csvreader import CsvReader
-from lineio import TellableLineIO
+from fileshovel.lineio import TellableLineIO
 
 log = logging.getLogger("fileshovel.options")
 
 
 class FileShovelOptions:
 	def __init__(self):
-		self.args = self.parse_args()
+		self.args = argparse.Namespace()
+		self.parse_args()
+
+		if self.dump_config:
+			self.dump_config_as_yaml(sys.stdout)
+			sys.exit(0)
+
 		self._first_row = self._get_first_row()
 
 	def _get_first_row(self) -> List[str]:
@@ -26,17 +33,27 @@ class FileShovelOptions:
 		finally:
 			reader.csv_file.close()
 
-	@staticmethod
-	def parse_args() -> argparse.Namespace:
+	def parse_args(self):
 		parser = argparse.ArgumentParser(
 			prog="fileshovel",
 		)
+		parser.add_argument("-c", "--config", default=None, type=str,
+							help=FileShovelOptions.config.__doc__)
+
+		if "--help" not in sys.argv:
+			parser.parse_known_args(namespace=self.args)
+
+			if self.args.config:
+				self.read_config_from_yaml()
+
 		parser.add_argument("--columns", type=str, default=None,
 							help=FileShovelOptions.columns.__doc__)
 		parser.add_argument("--date-column", type=str, default=None,
 							help=FileShovelOptions.date_column.__doc__)
 		parser.add_argument("--encoding", type=str, default="UTF-8",
 							help=FileShovelOptions.encoding.__doc__)
+		parser.add_argument("--wait-time", type=float, default=0.0,
+							help=FileShovelOptions.wait_time.__doc__)
 		parser.add_argument("--uuid-column", type=str, default=None,
 							help=FileShovelOptions.uuid_column.__doc__)
 		parser.add_argument("--csv-regex-search", type=str, default=None,
@@ -64,13 +81,41 @@ class FileShovelOptions:
 		parser.add_argument("--pg-csv-offset-column", type=str)
 		parser.add_argument("--pg-csv-line-column", type=str)
 		parser.add_argument("--pg-threads", type=int, default=1)
+		parser.add_argument("--dump-config", default=False, action="store_true",
+							help=FileShovelOptions.dump_config.__doc__)
 		parser.add_argument("-i", "--index-file", default=None, type=str,
 							help=FileShovelOptions.index_file.__doc__)
 		parser.add_argument("-w", "--watch", default="inotify", type=str,
 							help=FileShovelOptions.watch.__doc__)
 		parser.add_argument("csv_file", type=str,
 							help=FileShovelOptions.csv_file.__doc__)
-		return parser.parse_args()
+		parser.parse_args(namespace=self.args)
+
+	@property
+	def config(self) -> str:
+		"""YAML configuration file"""
+		return self.args.config
+
+	@property
+	def dump_config(self) -> bool:
+		"""dump a YAML configuration file of selected options"""
+		return self.args.dump_config
+
+	def read_config_from_yaml(self):
+		if self.config:
+			from ruamel.yaml import YAML
+			yaml_config = YAML(typ="safe").load(open(self.config, "r"))
+			for key in yaml_config:
+				if hasattr(self.args, key) is False:
+					setattr(self.args, key, yaml_config[key])
+
+	def dump_config_as_yaml(self, output: TextIO):
+		config_keys = (x for x in dir(self.args) if x[0] != "_")
+		config = {k: getattr(self.args, k) for k in config_keys}
+		from ruamel.yaml import YAML
+		yaml = YAML()
+		yaml.indent()
+		yaml.dump(config, output)
 
 	@property
 	def add_missing_columns(self) -> bool:
@@ -104,6 +149,11 @@ class FileShovelOptions:
 		return self.args.encoding
 
 	@property
+	def wait_time(self) -> float:
+		"""wait time in seconds between commits (default 0.0)"""
+		return self.args.wait_time
+
+	@property
 	def header(self) -> List[str]:
 		assert self._first_row is not None
 		return self._first_row
@@ -120,7 +170,7 @@ class FileShovelOptions:
 			return self.columns.index(self.args.uuid_column) - 1
 
 	@property
-	def csv_regex_search(self) -> re.Pattern:
+	def csv_regex_search(self):
 		"""apply the specified Python regex to each lines"""
 		if self.args.csv_regex_search:
 			return re.compile(bytes(self.args.csv_regex_search, self.encoding))
@@ -233,5 +283,9 @@ class FileShovelOptions:
 			regex_replace=bytes(self.csv_regex_replace, self.encoding) if self.csv_regex_replace else None,
 		)
 
-	def get_csv_file_reader(self, for_header=False):
-		return CsvReader(self.get_csv_file(for_header), delimiter=self.csv_delimiter)
+	def get_csv_file_reader(self, for_header=False, last_offset=0):
+		return CsvReader(
+			self.get_csv_file(for_header),
+			last_offset=last_offset,
+			delimiter=self.csv_delimiter,
+		)

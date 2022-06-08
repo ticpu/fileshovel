@@ -8,9 +8,14 @@ from fileshovel.lineio import TellableLineIO
 
 class CsvReader:
 
-	def __init__(self, csv_file: TellableLineIO, *args, **kwargs):
+	def __init__(self, csv_file: TellableLineIO, last_offset=0, *args, **kwargs):
 		"""Wrapper around 'csv.reader' to iterate over line and offset."""
 		self.csv_file = csv_file
+
+		if last_offset > 0:
+			self.csv_file.skip_lines = 0
+			self.csv_file.seek(last_offset)
+
 		self.reader = csv.reader(csv_file, *args, **kwargs)
 
 	def __iter__(self) -> Iterable[Tuple[str, int, int]]:

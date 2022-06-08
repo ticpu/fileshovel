@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # vim:set noet ts=4 sw=4 fenc=utf-8 ff=unix ft=python:
 import logging
+import time
 from queue import Queue
 from threading import Event, Thread
 from typing import List
@@ -53,9 +54,6 @@ class PgLineInserter:
 			yield Thread(name="sql_thread%d" % i, target=self._insert_rows, args=(self.insert_queue,))
 
 	def get_last_offset_from_database(self) -> int:
-		date_columns = self._options.date_column_name.split(",")
-		date_columns = SQL(" DESC, ").join((Identifier(x) for x in date_columns))
-
 		with self.connect_database() as pg_connection:
 			c = pg_connection.cursor()
 
@@ -65,13 +63,13 @@ class PgLineInserter:
 					self.table,
 					self.server_name_column,
 					Literal(self.server_name_value),
-					date_columns,
+					self.offset_column,
 				)
 			else:
 				sql = SQL("SELECT {0} FROM {1} ORDER BY {2} DESC LIMIT 1").format(
 					self.offset_column,
 					self.table,
-					date_columns,
+					self.offset_column,
 				)
 
 			sql = sql.as_string(pg_connection)
@@ -88,6 +86,12 @@ class PgLineInserter:
 		if self.sql_thread_dead.is_set():
 			raise RuntimeError("SQL thread died.")
 		self.insert_queue.put((line, current_line, current_line_offset), block=True)
+
+	def pre_commit(self):
+		pass
+
+	def post_commit(self):
+		pass
 
 	def done(self):
 		if self._options.pg_threads > 0:
@@ -134,7 +138,7 @@ class PgLineInserter:
 			pg_connection = self.connect_database()
 			cursor = pg_connection.cursor()
 			insert_format = SQL("INSERT INTO {0} ({1}) VALUES {2}")
-			task_done = 0
+			do_nothing = SQL("ON CONFLICT DO NOTHING")
 			ending = False
 			log.info("connected")
 			values = []
@@ -147,20 +151,20 @@ class PgLineInserter:
 				else:
 					values.append(self._prepare_row(item))
 
-				task_done += 1
-
-				if task_done > rows_per_commit or ending is True or self.insert_queue.qsize() == 0:
+				if len(values) > 0 and (len(values) > rows_per_commit or ending is True or self.insert_queue.qsize() == 0):
 					composed = insert_format.format(
 						table,
 						SQL(",").join(columns),
 						SQL(",").join(values),
-					)
+					) + do_nothing
 					sql = composed.as_string(pg_connection)
 					log.debug("inserting %d rows", len(values))
 					cursor.execute(sql)
 					values.clear()
+					self.pre_commit()
 					pg_connection.commit()
-					task_done = 0
+					self.post_commit()
+					time.sleep(self._options.wait_time)
 
 				row_queue.task_done()
 

@@ -6,7 +6,7 @@ import os
 import re
 import time
 from enum import Enum
-from typing import Iterable, Union, Optional, List, IO
+from typing import Iterable, Optional, List, IO
 
 import pyinotify
 from pyinotify import WatchManager, Notifier, Event
@@ -36,7 +36,7 @@ class TellableLineIOEvent(Enum):
 class TellableLineIO(io.TextIOBase):
 
 	def __init__(self, filename, mode, encoding, skip_lines=0, every_nth=0, watch=False, use_inotify=False,
-			regex_search: Union[re.Pattern, bytes] = None, regex_replace: bytes = None):
+			regex_search=None, regex_replace: bytes = None):
 		if 'b' not in mode:
 			mode += 'b'
 
@@ -53,7 +53,7 @@ class TellableLineIO(io.TextIOBase):
 		self.skip_lines = skip_lines
 		self.every_nth = every_nth
 		self.watch = watch
-		self._file = IO()
+		self._file = None
 		self._file_iter = None
 		self.open_file()
 		self._use_inotify = use_inotify
@@ -73,6 +73,7 @@ class TellableLineIO(io.TextIOBase):
 			return os.fstat(self._file.fileno()).st_size
 
 	def seek(self, offset, whence=io.SEEK_SET) -> int:
+		log.debug("seeking to %d", offset)
 		if offset <= self.get_size():
 			ret = self._file.seek(offset, whence)
 			return ret
@@ -117,13 +118,18 @@ class TellableLineIO(io.TextIOBase):
 		regex_search = self.regex_search
 		regex_replace = self.regex_replace
 		eof_reached = False
-		last_offset = 0
+		last_offset = self.tell()
 		line = ""
 		event_watcher = self.setup_watch_manager()
 
 		if self.skip_lines > 0:
+			log.info("skipping %d lines from offset %d", self.skip_lines, last_offset)
 			for line in range(self.skip_lines):
 				next(self._file_iter)
+
+		if last_offset > 0:
+			next(self._file_iter)
+			self.current_line_offset = self.tell()
 
 		while True:
 
