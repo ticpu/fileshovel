@@ -29,21 +29,27 @@ class TellableLineIOTest(TestCase):
 
 			self.assertIsNotNone(e, "there shouldn't be any line to read but we got one: %s" % line)
 
-	@patch("builtins.open", mock_open(read_data=b"one line\n"))
 	def test_oneCompleteLineFile_readFile_returnsOneLine(self):
-		t = TellableLineIO(a_filename, "rb", default_encoding)
-		lines = list(t)
-		self.assertEqual(len(lines), 1)
+		mock_file = MagicMock()
+		mock_file.return_value = io.BytesIO(initial_bytes=b"one line\n")
 
-	@patch("builtins.open", mock_open(read_data=b"one line\none incomplete line"))
+		with patch("builtins.open", mock_file):
+			t = TellableLineIO(a_filename, "rb", default_encoding)
+			lines = list(t)
+			self.assertEqual(len(lines), 1)
+
 	def test_oneCompleteLineAndOneIncompleteLineFile_readFile_returnsOneLine(self):
-		t = TellableLineIO(a_filename, "rb", default_encoding)
-		line_count = 0
+		mock_file = MagicMock()
+		mock_file.return_value = io.BytesIO(initial_bytes=b"one line\none incomplete line")
 
-		for line in t:
-			line_count += 1
-			self.assertIn('\n', line)
-			self.assertEqual(line_count, t.current_line)
+		with patch("builtins.open", mock_file):
+			t = TellableLineIO(a_filename, "rb", default_encoding)
+			line_count = 0
+
+			for line in t:
+				line_count += 1
+				self.assertIn('\n', line)
+				self.assertEqual(line_count, t.current_line)
 
 		self.assertEqual(line_count, 1, "found an incomplete line in output")
 
@@ -59,9 +65,13 @@ class TellableLineIOTest(TestCase):
 
 		mock_file.assert_called_once()
 
-	@patch("builtins.open", mock_open(read_data=b""))
 	def test_emptyFile_getEncoding_returnsPassedEncoding(self):
-		t = TellableLineIO(a_filename, "rb", default_encoding)
+		mock_file = MagicMock()
+		mock_file.return_value = io.BytesIO(initial_bytes=b"")
+
+		with patch("builtins.open", mock_file):
+			t = TellableLineIO(a_filename, "rb", default_encoding)
+
 		self.assertEqual(t.encoding, default_encoding)
 
 	def test_emptyFile_openWithoutBinary_binaryModeAddedStillReturnsString(self):
@@ -76,23 +86,29 @@ class TellableLineIOTest(TestCase):
 
 		mock_file.assert_called_once_with(a_filename, "rb")
 
-	@patch("builtins.open", mock_open(read_data=b"line1\nline2\nline3\n"))
 	def test_3linesFile_skip2andRead_readsOneLine(self):
-		t = TellableLineIO(a_filename, "rb", default_encoding, skip_lines=2)
-		line_count = 0
+		mock_file = MagicMock()
+		mock_file.return_value = io.BytesIO(initial_bytes=b"line1\nline2\nline3\n")
 
-		for _ in t:
-			line_count += 1
+		with patch("builtins.open", mock_file):
+			t = TellableLineIO(a_filename, "rb", default_encoding, skip_lines=2)
+			line_count = 0
+
+			for _ in t:
+				line_count += 1
 
 		self.assertEqual(line_count, 1)
 
-	@patch("builtins.open", mock_open(read_data=b"aline1\nbline2\ncline3\ndline4\n"))
 	def test_3linesFile_readWithRegex_regexIsAppliedToOutput(self):
-		t = TellableLineIO(a_filename, "rb", default_encoding, regex_search=br"^([ab]).in", regex_replace=br"\1pin")
+		mock_file = MagicMock()
+		mock_file.return_value = io.BytesIO(initial_bytes=b"aline1\nbline2\ncline3\ndline4\n")
 
-		for line in t:
-			if t.current_line in [0, 1]:
-				self.assertIn("pine", line, msg="regex conversion has failed")
+		with patch("builtins.open", mock_file):
+			t = TellableLineIO(a_filename, "rb", default_encoding, regex_search=br"^([ab]).in", regex_replace=br"\1pin")
+
+			for line in t:
+				if t.current_line in [0, 1]:
+					self.assertIn("pine", line, msg="regex conversion has failed")
 
 	def test_10linesFile_skip2andReadEvery2_reads4Lines(self):
 		mock_file = MagicMock()
