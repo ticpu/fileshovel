@@ -1,0 +1,1 @@
+ARGS="-c /etc/fileshovel.yaml /var/log/freeswitch/cdr-csv/Master.csv"

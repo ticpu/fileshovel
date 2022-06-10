@@ -1,0 +1,20 @@
+Source: fileshovel
+Maintainer: Jérôme Poulin <jerome.poulin@cauca.ca>
+Section: misc
+Priority: optional
+Standards-Version: 3.9.7
+Vcs-Git: https://github.com/ticpu/fileshovel.git
+Description: Copies data from a CSV to a database in realtime.
+Build-Depends: debhelper (>= 9),
+ dh-python,
+ python3-all,
+ python3-setuptools,
+
+Package: fileshovel
+Architecture: any
+Description: Copies data from a CSV to a database in realtime.
+Depends: ${python3:Depends}, ${misc:Depends},
+ python3 (>=3.6.0),
+ python3-ruamel.yaml,
+ python3-pyinotify,
+ python3-psycopg2,
