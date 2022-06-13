@@ -43,7 +43,7 @@ class TellableLineIO(io.TextIOBase):
 		if regex_search and regex_replace is None:
 			raise RuntimeError("regex_replace must be set if regex_search is set")
 
-		if regex_search and type(regex_search) != re.Pattern:
+		if regex_search and type(regex_search) == bytes:
 			regex_search = re.compile(regex_search)
 
 		self._file = None

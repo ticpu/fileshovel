@@ -14,7 +14,7 @@ Package: fileshovel
 Architecture: any
 Description: Copies data from a CSV to a database in realtime.
 Depends: ${python3:Depends}, ${misc:Depends},
- python3 (>=3.6.0),
+ python3 (>=3.5.0),
  python3-ruamel.yaml,
  python3-pyinotify,
  python3-psycopg2,
