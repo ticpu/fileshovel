@@ -138,7 +138,7 @@ class PgLineInserter:
 			pg_connection = self.connect_database()
 			cursor = pg_connection.cursor()
 			insert_format = SQL("INSERT INTO {0} ({1}) VALUES {2}")
-			do_nothing = SQL("ON CONFLICT DO NOTHING")
+			do_nothing = SQL(" ON CONFLICT DO NOTHING")
 			ending = False
 			log.info("connected")
 			values = []
