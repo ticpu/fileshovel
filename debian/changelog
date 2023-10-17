@@ -1,6 +1,7 @@
-fileshovel (0.1.1) UNRELEASED; urgency=medium
+fileshovel (0.1.2) UNRELEASED; urgency=medium
 
   * Initial release.
   * Compatibility with Ubuntu Xenial.
+  * Fix a bug in the parser.
 
- -- Jérôme Poulin <jeromepoulin@gmail.com>  Mon, 13 Jun 2022 11:54:57 -0400
+ -- Jérôme Poulin <jeromepoulin@gmail.com>  Tue, 17 Oct 2023 11:47:00 -0400
