@@ -5,13 +5,13 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=-/etc/default/fileshovel
-ExecStart=/bin/sh -c '[ -s "$FILESHOVEL_CONFIG" ] || exit 3; exec /usr/bin/fileshovel -c "$FILESHOVEL_CONFIG" $ARGS'
+ExecStart=/bin/sh -c '[ -s "$FILESHOVEL_CONFIG" ] || exit 78; exec /usr/bin/fileshovel -c "$FILESHOVEL_CONFIG" $ARGS'
 CapabilityBoundingSet=
 NoNewPrivileges=true
 ProtectSystem=strict
 Restart=on-failure
 RestartSec=1min
-RestartPreventExitStatus=3
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=multi-user.target
