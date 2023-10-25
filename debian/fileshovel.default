@@ -1,1 +1,2 @@
-ARGS="-c /etc/fileshovel.yaml /var/log/freeswitch/cdr-csv/Master.csv"
+FILESHOVEL_CONFIG=/etc/fileshovel.yaml
+ARGS="/var/log/freeswitch/cdr-csv/Master.csv"

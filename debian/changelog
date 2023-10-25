@@ -1,7 +1,8 @@
-fileshovel (0.1.2) UNRELEASED; urgency=medium
+fileshovel (1.0) unstable; urgency=medium
 
   * Initial release.
   * Compatibility with Ubuntu Xenial.
   * Fix a bug in the parser.
+  * Update systemd file to stop service when config is missing.
 
- -- Jérôme Poulin <jeromepoulin@gmail.com>  Tue, 17 Oct 2023 11:47:00 -0400
+ -- Jérôme Poulin <jeromepoulin@gmail.com>  Wed, 25 Oct 2023 15:50:21 -0400
