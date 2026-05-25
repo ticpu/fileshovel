@@ -99,6 +99,19 @@ class TellableLineIOTest(TestCase):
 
 		self.assertEqual(line_count, 1)
 
+	def test_badUtf8Line_readFile_doesNotRaiseAndUsesReplacement(self):
+		mock_file = MagicMock()
+		mock_file.return_value = io.BytesIO(initial_bytes=b"good\nbad\xc3\nstill_good\n")
+
+		with patch("builtins.open", mock_file):
+			t = TellableLineIO(a_filename, "rb", default_encoding)
+			lines = list(t)
+
+		self.assertEqual(len(lines), 3)
+		self.assertEqual(lines[0], "good\n")
+		self.assertIn("�", lines[1], msg="bad byte should be replaced with U+FFFD")
+		self.assertEqual(lines[2], "still_good\n")
+
 	def test_3linesFile_readWithRegex_regexIsAppliedToOutput(self):
 		mock_file = MagicMock()
 		mock_file.return_value = io.BytesIO(initial_bytes=b"aline1\nbline2\ncline3\ndline4\n")
