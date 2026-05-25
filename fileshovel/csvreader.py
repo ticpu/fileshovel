@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 # vim:set noet ts=4 sw=4 fenc=utf-8 ff=unix ft=python:
 import csv
+import logging
 from typing import Iterable, Tuple
 
 from fileshovel.lineio import TellableLineIO
+
+log = logging.getLogger("fileshovel.csvreader")
 
 
 class CsvReader:
@@ -21,5 +24,14 @@ class CsvReader:
 	def __iter__(self) -> Iterable[Tuple[str, int, int]]:
 		csv_file = self.csv_file
 
-		for line in self.reader:
+		while True:
+			try:
+				line = next(self.reader)
+			except StopIteration:
+				return
+			except csv.Error as e:
+				log.warning("csv parse error at line %d offset %d: %s; skipping record",
+						csv_file.current_line, csv_file.current_line_offset, e)
+				continue
+
 			yield line, csv_file.current_line, csv_file.current_line_offset

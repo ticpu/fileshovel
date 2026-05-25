@@ -146,7 +146,13 @@ class TellableLineIO(io.TextIOBase):
 					line = regex_search.sub(regex_replace, line)
 
 				self.current_line = current_line
-				yield str(line, self._encoding)
+				try:
+					decoded = str(line, self._encoding)
+				except UnicodeDecodeError as e:
+					log.warning("decode error at line %d offset %d: %s; using replacement characters",
+							current_line, self.current_line_offset, e)
+					decoded = str(line, self._encoding, errors="replace")
+				yield decoded
 				last_offset = self.current_line_offset
 				self.current_line_offset = self.tell()
 
