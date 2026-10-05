@@ -65,6 +65,10 @@ class CsvReaderResumeTest(TestCase):
 		rows = read_all(b"h1,h2\na,1\nb,2\nc,3\n", last_offset=len(b"h1,h2\na,1\n"), skip_lines=1)
 		self.assertEqual(rows, [["c", "3"]])
 
+	def test_offsetEqualsFileSize_resume_readsNothing(self):
+		rows = read_all(b"a,1\n", last_offset=4, skip_lines=0)
+		self.assertEqual(rows, [])
+
 	def test_offsetBeyondFileSize_resume_readsFromStartSkippingHeader(self):
 		with self.assertLogs("fileshovel.csvreader", "WARNING"):
 			rows = read_all(b"h1,h2\na,1\n", last_offset=1000, skip_lines=1)
