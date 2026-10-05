@@ -227,6 +227,24 @@ class TellableLineIOTest(TestCase):
 			if test_file_name and os.path.isfile(test_file_name):
 				os.remove(test_file_name)
 
+	def test_watchedFile_reachEof_callsOnIdleBeforeWaiting(self):
+		mock_file = MagicMock()
+		mock_file.return_value = os.fdopen(os.open(os.path.dirname(__file__), os.O_TMPFILE | os.O_RDWR), "r+b")
+		mock_file.return_value.write(b"line1\nline2\n")
+		mock_file.return_value.seek(0)
+		idle_after = []
+
+		def on_idle():
+			idle_after.append(t.current_line)
+			t.watch = False
+
+		with patch("builtins.open", mock_file):
+			t = TellableLineIO(a_filename, "rb", default_encoding, watch=True, on_idle=on_idle)
+			lines = list(t)
+
+		self.assertEqual(len(lines), 2)
+		self.assertEqual(idle_after, [2])
+
 	def test_twoLineAndAHalfFile_readWholeFileCompleteLine_readsThirdLine(self):
 		mock_file = MagicMock()
 		test_file = os.fdopen(os.open("/tmp", os.O_TMPFILE | os.O_RDWR), "r+b")

@@ -2,9 +2,8 @@
 # vim:set noet ts=4 sw=4 fenc=utf-8 ff=unix ft=python:
 import logging
 import time
-from queue import Queue
-from threading import Event, Thread
-from typing import List
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Tuple
 
 import psycopg2
 from psycopg2.sql import Identifier, SQL, Literal
@@ -12,6 +11,13 @@ from psycopg2.sql import Identifier, SQL, Literal
 from fileshovel.options import FileShovelOptions
 
 log = logging.getLogger("fileshovel.pgsql")
+
+# (line, offset, values)
+Row = Tuple[int, int, list]
+
+
+class InsertError(Exception):
+	pass
 
 
 class PgLineInserter:
@@ -22,9 +28,6 @@ class PgLineInserter:
 		self.server_name_value = options.pg_server_name_value
 		self.offset_column = Identifier(options.pg_csv_offset_column)
 		self.extra_columns = [self.offset_column]
-		self.insert_queue = Queue(maxsize=options.pg_rows_per_commit if options.pg_threads > 0 else 0)
-		self.sql_threads = list(self.start_sql_threads(options.pg_threads))
-		self.sql_thread_dead = Event()
 
 		if options.pg_csv_line_column:
 			self.extra_columns.append(Identifier(options.pg_csv_line_column))
@@ -37,21 +40,18 @@ class PgLineInserter:
 
 		if options.pg_schema:
 			self.table = SQL(".").join([Identifier(options.pg_schema), Identifier(options.pg_table)])
+			self.table_name = "%s.%s" % (options.pg_schema, options.pg_table)
 		else:
 			self.table = Identifier(options.pg_table)
+			self.table_name = options.pg_table
 
-		self.last_offset = self.get_last_offset_from_database()
-
-		if options.pg_threads > 0:
-			for t in self.sql_threads:
-				t.start()
+		self._connection = self.connect_database()
+		self._pending = []
+		self._in_flight = None
+		self._executor = ThreadPoolExecutor(max_workers=1) if options.pg_threads else None
 
 	def connect_database(self):
 		return psycopg2.connect(self._options.pg_connection_string)
-
-	def start_sql_threads(self, how_many: int) -> List[Thread]:
-		for i in range(how_many):
-			yield Thread(name="sql_thread%d" % i, target=self._insert_rows, args=(self.insert_queue,))
 
 	def get_last_offset_from_database(self) -> int:
 		with self.connect_database() as pg_connection:
@@ -83,25 +83,40 @@ class PgLineInserter:
 			return ret
 
 	def add_row(self, line: list, current_line: int, current_line_offset: int):
-		if self.sql_thread_dead.is_set():
-			raise RuntimeError("SQL thread died.")
-		self.insert_queue.put((line, current_line, current_line_offset), block=True)
+		try:
+			values = self._prepare_row((line, current_line, current_line_offset))
+		except IndexError as e:
+			raise InsertError("row at offset %d, line %d: %s" % (current_line_offset, current_line, e)) from None
 
-	def pre_commit(self):
-		pass
+		self._pending.append((current_line, current_line_offset, values))
 
-	def post_commit(self):
-		pass
+		if len(self._pending) >= self._options.pg_rows_per_commit:
+			self._submit()
 
-	def done(self):
-		if self._options.pg_threads > 0:
-			for _ in self.sql_threads:
-				self.insert_queue.put(None)
-			for t in self.sql_threads:
-				t.join()
+	def flush(self):
+		"""Insert pending rows and, after catch-up, stop using the worker thread."""
+		if self._executor:
+			self._wait()
+			self._executor.shutdown()
+			self._executor = None
+			log.info("caught up, inserting synchronously from now on")
+
+		if self._pending:
+			self._submit()
+
+	def _submit(self):
+		batch, self._pending = self._pending, []
+
+		if self._executor:
+			self._wait()
+			self._in_flight = self._executor.submit(self._insert_batch, batch)
 		else:
-			self.insert_queue.put(None)
-			self._insert_rows(self.insert_queue)
+			self._insert_batch(batch)
+
+	def _wait(self):
+		if self._in_flight:
+			in_flight, self._in_flight = self._in_flight, None
+			in_flight.result()
 
 	def _prepare_row(self, item):
 		line, current_line, current_line_offset = item
@@ -128,49 +143,39 @@ class PgLineInserter:
 
 		return line
 
-	def _insert_rows(self, row_queue: Queue):
-		columns = self.columns
-		table = self.table
-		rows_per_commit = self._options.pg_rows_per_commit
+	def _insert_batch(self, batch: List[Row]):
+		first_line, first_offset, _ = batch[0]
+		last_line, last_offset, _ = batch[-1]
+		values = SQL(",").join(
+			SQL("(") + SQL(",").join(Literal(x) for x in row) + SQL(")") for _, _, row in batch
+		)
+		sql = SQL("INSERT INTO {0} ({1}) VALUES {2} ON CONFLICT DO NOTHING").format(
+			self.table,
+			SQL(",").join(self.columns),
+			values,
+		)
 
 		try:
-			log.info("connecting")
-			pg_connection = self.connect_database()
-			cursor = pg_connection.cursor()
-			insert_format = SQL("INSERT INTO {0} ({1}) VALUES {2}")
-			do_nothing = SQL(" ON CONFLICT DO NOTHING")
-			ending = False
-			log.info("connected")
-			values = []
+			with self._connection.cursor() as cursor:
+				cursor.execute(sql)
+			self._connection.commit()
+		except psycopg2.Error as e:
+			raise InsertError("insert into %s failed for offsets %d-%d, lines %d-%d: %s" % (
+				self.table_name, first_offset, last_offset, first_line, last_line, describe_error(e),
+			)) from None
 
-			while True:
-				item = row_queue.get()
+		log.info("committed %d rows, offsets %d-%d, lines %d-%d", len(batch), first_offset, last_offset, first_line, last_line)
+		time.sleep(self._options.wait_time)
 
-				if item is None:
-					ending = True
-				else:
-					row = self._prepare_row(item)
-					values.append(SQL("(") + SQL(",").join(Literal(x) for x in row) + SQL(")"))
 
-				if len(values) > 0 and (len(values) > rows_per_commit or ending is True or self.insert_queue.qsize() == 0):
-					composed = insert_format.format(
-						table,
-						SQL(",").join(columns),
-						SQL(",").join(values),
-					) + do_nothing
-					sql = composed.as_string(pg_connection)
-					log.debug("inserting %d rows", len(values))
-					cursor.execute(sql)
-					values.clear()
-					self.pre_commit()
-					pg_connection.commit()
-					self.post_commit()
-					time.sleep(self._options.wait_time)
+def describe_error(e: psycopg2.Error) -> str:
+	"""Name the failure without the server's message text, which quotes rejected values."""
+	if e.pgcode is None:
+		return "%s: %s" % (type(e).__name__, str(e).strip())
 
-				row_queue.task_done()
-
-				if ending:
-					break
-
-		finally:
-			self.sql_thread_dead.set()
+	parts = ["%s (SQLSTATE %s)" % (type(e).__name__, e.pgcode)]
+	for name in ("column_name", "datatype_name", "constraint_name"):
+		value = getattr(e.diag, name)
+		if value:
+			parts.append("%s %s" % (name.split("_")[0], value))
+	return ", ".join(parts)

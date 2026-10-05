@@ -13,6 +13,10 @@ from fileshovel.lineio import TellableLineIO
 log = logging.getLogger("fileshovel.options")
 
 
+class ConfigError(Exception):
+	pass
+
+
 class FileShovelOptions:
 	def __init__(self):
 		self.args = argparse.Namespace()
@@ -260,7 +264,9 @@ class FileShovelOptions:
 
 	@property
 	def pg_threads(self) -> int:
-		"""how many parallel SQL threads to run"""
+		"""1 to insert on a worker thread while catching up, 0 to always insert synchronously"""
+		if self.args.pg_threads not in (0, 1):
+			raise ConfigError("pg_threads must be 0 or 1, parallel writers commit out of order and break resume")
 		return self.args.pg_threads
 
 	@property
@@ -276,7 +282,7 @@ class FileShovelOptions:
 		else:
 			return self.args.index_file
 
-	def get_csv_file(self, for_header=False) -> TellableLineIO:
+	def get_csv_file(self, for_header=False, on_idle=None) -> TellableLineIO:
 		return TellableLineIO(
 			self.args.csv_file,
 			"r",
@@ -287,11 +293,12 @@ class FileShovelOptions:
 			use_inotify=self.watch == "inotify",
 			regex_search=self.csv_regex_search,
 			regex_replace=bytes(self.csv_regex_replace, self.encoding) if self.csv_regex_replace else None,
+			on_idle=on_idle,
 		)
 
-	def get_csv_file_reader(self, for_header=False, last_offset=0):
+	def get_csv_file_reader(self, for_header=False, last_offset=0, on_idle=None):
 		return CsvReader(
-			self.get_csv_file(for_header),
+			self.get_csv_file(for_header, on_idle),
 			last_offset=last_offset,
 			delimiter=self.csv_delimiter,
 		)

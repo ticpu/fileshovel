@@ -36,7 +36,7 @@ class TellableLineIOEvent(Enum):
 class TellableLineIO(io.TextIOBase):
 
 	def __init__(self, filename, mode, encoding, skip_lines=0, every_nth=0, watch=False, use_inotify=False,
-			regex_search=None, regex_replace: bytes = None):
+			regex_search=None, regex_replace: bytes = None, on_idle=None):
 		if 'b' not in mode:
 			mode += 'b'
 
@@ -61,6 +61,7 @@ class TellableLineIO(io.TextIOBase):
 		self.regex_replace = regex_replace
 		self.current_line = 0
 		self.current_line_offset = 0
+		self.on_idle = on_idle
 
 	def open_file(self):
 		if self._file:
@@ -161,6 +162,9 @@ class TellableLineIO(io.TextIOBase):
 				log.info("end of file has been reached for %s", self.filename)
 
 			if self.watch and eof_reached:
+				if self.on_idle:
+					self.on_idle()
+
 				if event_watcher:
 					event = self._wait_for_file_event(event_watcher)
 					if event is TellableLineIOEvent.DELETE:
