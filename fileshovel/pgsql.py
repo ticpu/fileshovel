@@ -120,13 +120,13 @@ class PgLineInserter:
 
 		line.append(current_line_offset)
 
-		if self._options.pg_csv_offset_column:
+		if self._options.pg_csv_line_column:
 			line.append(current_line)
 
 		if self.server_name_column:
 			line.append(self.server_name_value)
 
-		return SQL("(") + SQL(",").join((Literal(x) for x in line)) + SQL(")")
+		return line
 
 	def _insert_rows(self, row_queue: Queue):
 		columns = self.columns
@@ -149,7 +149,8 @@ class PgLineInserter:
 				if item is None:
 					ending = True
 				else:
-					values.append(self._prepare_row(item))
+					row = self._prepare_row(item)
+					values.append(SQL("(") + SQL(",").join(Literal(x) for x in row) + SQL(")"))
 
 				if len(values) > 0 and (len(values) > rows_per_commit or ending is True or self.insert_queue.qsize() == 0):
 					composed = insert_format.format(
