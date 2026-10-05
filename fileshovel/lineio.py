@@ -5,32 +5,12 @@ import logging
 import os
 import re
 import time
-from enum import Enum
-from typing import Iterable, Optional, List, IO
+from typing import Iterable, Optional
 
 import pyinotify
-from pyinotify import WatchManager, Notifier, Event
+from pyinotify import WatchManager, Notifier
 
 log = logging.getLogger("fileshovel.lineio")
-
-
-class FileEventNotifier(Notifier):
-
-	def get_events(self, timeout) -> List[Event]:
-		events = []
-		if self.check_events(timeout) is not False:
-			self.read_events()
-			for event in range(len(self._eventq)):
-				e = Event({k: v for k, v in self._eventq.popleft().__dict__.items() if not k[0].startswith("_")})
-				events.append(e)
-
-		return events
-
-
-class TellableLineIOEvent(Enum):
-	NOTHING = 0
-	MODIFY = 1
-	DELETE = 2
 
 
 class TellableLineIO(io.TextIOBase):
@@ -53,10 +33,9 @@ class TellableLineIO(io.TextIOBase):
 		self.skip_lines = skip_lines
 		self.every_nth = every_nth
 		self.watch = watch
-		self._file = None
-		self._file_iter = None
 		self.open_file()
 		self._use_inotify = use_inotify
+		self._resuming = False
 		self.regex_search = regex_search
 		self.regex_replace = regex_replace
 		self.current_line = 0
@@ -67,19 +46,18 @@ class TellableLineIO(io.TextIOBase):
 		if self._file:
 			self._file.close()
 		self._file = open(self.filename, self.mode)
-		self._file_iter = iter(self._file)
 
 	def get_size(self) -> int:
-		if self._file:
-			return os.fstat(self._file.fileno()).st_size
+		return os.fstat(self._file.fileno()).st_size
 
-	def seek(self, offset, whence=io.SEEK_SET) -> int:
+	def resume_after(self, offset: int):
+		"""Continue after the line starting at offset instead of skipping skip_lines."""
+		size = self.get_size()
+		if offset > size:
+			raise ValueError("offset %d is beyond the size of %s (%d)" % (offset, self.filename, size))
 		log.debug("seeking to %d", offset)
-		if offset <= self.get_size():
-			ret = self._file.seek(offset, whence)
-			return ret
-		else:
-			return 0
+		self._file.seek(offset)
+		self._resuming = True
 
 	def tell(self) -> int:
 		return self._file.tell()
@@ -88,55 +66,58 @@ class TellableLineIO(io.TextIOBase):
 	def encoding(self) -> str:
 		return self._encoding
 
-	def setup_watch_manager(self) -> Optional[FileEventNotifier]:
-		if self._use_inotify and os.path.isfile(self.filename):
-			mask = pyinotify.IN_MODIFY | \
-					pyinotify.IN_ATTRIB | \
-					pyinotify.IN_MOVE_SELF | \
-					pyinotify.IN_DELETE_SELF
-
+	def _setup_notifier(self) -> Optional[Notifier]:
+		if self._use_inotify:
 			watch_manager = WatchManager()
-			watch_manager.add_watch(self.filename, mask=mask)
-			notifier = FileEventNotifier(watch_manager)
-			notifier.coalesce_events(True)
-			return notifier
+			watch_manager.add_watch(
+				os.path.dirname(os.path.abspath(self.filename)),
+				pyinotify.IN_MODIFY | pyinotify.IN_CREATE | pyinotify.IN_MOVED_TO,
+				quiet=False,
+			)
+			return Notifier(watch_manager, default_proc_fun=lambda event: None)
 
-	@staticmethod
-	def _wait_for_file_event(event_watcher) -> TellableLineIOEvent:
-		for event in event_watcher.get_events(timeout=60000):
-			if event.mask & pyinotify.IN_MODIFY:
-				return TellableLineIOEvent.MODIFY
-			elif event.mask & (pyinotify.IN_MOVE_SELF | pyinotify.IN_DELETE_SELF | pyinotify.IN_ATTRIB):
-				return TellableLineIOEvent.DELETE
-			else:
-				log.warning("got unknown event mask %o", event.mask)
+	def _wait(self, notifier: Optional[Notifier]):
+		if notifier:
+			if notifier.check_events(timeout=60000):
+				notifier.read_events()
+				notifier.process_events()
+		else:
+			time.sleep(int(self.watch))
 
-		return TellableLineIOEvent.NOTHING
+	def _replaced(self) -> bool:
+		try:
+			path_stat = os.stat(self.filename)
+		except FileNotFoundError:
+			log.debug("%s does not exist, keeping the open file", self.filename)
+			return False
+		file_stat = os.fstat(self._file.fileno())
+		return (path_stat.st_dev, path_stat.st_ino) != (file_stat.st_dev, file_stat.st_ino)
 
 	def __iter__(self) -> Iterable[str]:
+		notifier = self._setup_notifier()
+		try:
+			yield from self._read_lines(notifier)
+		finally:
+			if notifier:
+				notifier.stop()
+
+	def _read_lines(self, notifier: Optional[Notifier]) -> Iterable[str]:
 		every_nth = self.every_nth
-		current_line = 0
 		regex_search = self.regex_search
 		regex_replace = self.regex_replace
-		eof_reached = False
-		last_offset = self.tell()
-		line = ""
-		event_watcher = self.setup_watch_manager()
-
-		if self.skip_lines > 0:
-			log.info("skipping %d lines from offset %d", self.skip_lines, last_offset)
-			for line in range(self.skip_lines):
-				next(self._file_iter)
-
-		if last_offset > 0:
-			next(self._file_iter)
-			self.current_line_offset = self.tell()
+		current_line = 0
+		to_skip = 1 if self._resuming else self.skip_lines
+		eof_logged = False
+		replaced = False
 
 		while True:
+			start = self._file.tell()
+			line = self._file.readline()
 
-			for line in self._file_iter:
-				if line[-1:] != b"\n":
-					break
+			if line[-1:] == b"\n":
+				if to_skip:
+					to_skip -= 1
+					continue
 
 				current_line += 1
 
@@ -147,43 +128,41 @@ class TellableLineIO(io.TextIOBase):
 					line = regex_search.sub(regex_replace, line)
 
 				self.current_line = current_line
+				self.current_line_offset = start
 				try:
 					decoded = str(line, self._encoding)
 				except UnicodeDecodeError as e:
 					log.warning("decode error at line %d offset %d: %s; using replacement characters",
-							current_line, self.current_line_offset, e)
+							current_line, start, e)
 					decoded = str(line, self._encoding, errors="replace")
 				yield decoded
-				last_offset = self.current_line_offset
-				self.current_line_offset = self.tell()
+				continue
 
-			if eof_reached is False:
-				eof_reached = True
+			self._file.seek(start)
+
+			if not eof_logged:
+				eof_logged = True
 				log.info("end of file has been reached for %s", self.filename)
 
-			if self.watch and eof_reached:
-				if self.on_idle:
-					self.on_idle()
-
-				if event_watcher:
-					event = self._wait_for_file_event(event_watcher)
-					if event is TellableLineIOEvent.DELETE:
-						log.info("file has changed, need to re-open file")
-						self.open_file()
-						continue
-					elif event is TellableLineIOEvent.MODIFY:
-						if self.tell() > self.get_size():
-							log.info("file size has reduced, need to re-open file")
-							self.open_file()
-							eof_reached = False
-							continue
-				else:
-					time.sleep(int(self.watch))
-
+			if replaced or not self.watch:
 				if line:
-					self.seek(last_offset + len(line) - 1)
-					next(self._file_iter)
+					log.warning("ignoring incomplete last line at offset %d of %s", start, self.filename)
+				if not self.watch:
+					log.debug("reached end of file and not watching, closing")
+					return
+				log.info("%s was replaced, reopening", self.filename)
+				self.open_file()
+				to_skip, current_line, eof_logged, replaced = self.skip_lines, 0, False, False
+				continue
 
-			else:
-				log.debug("reached end of file and not watching, closing")
-				break
+			if self.on_idle:
+				self.on_idle()
+
+			self._wait(notifier)
+
+			if self._replaced():
+				replaced = True
+			elif self.get_size() < start:
+				log.warning("%s was truncated, reading from the start", self.filename)
+				self._file.seek(0)
+				to_skip, current_line = self.skip_lines, 0

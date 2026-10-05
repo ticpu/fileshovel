@@ -22,8 +22,7 @@ class CsvReader:
 				last_offset, csv_file.filename, csv_file.get_size())
 		else:
 			log.info("resuming %s after offset %d", csv_file.filename, last_offset)
-			self.csv_file.skip_lines = 0
-			self.csv_file.seek(last_offset)
+			self.csv_file.resume_after(last_offset)
 
 		self.reader = csv.reader(csv_file, *args, **kwargs)
 

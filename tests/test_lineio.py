@@ -250,8 +250,7 @@ class TellableLineIOTest(TestCase):
 		test_file = os.fdopen(os.open("/tmp", os.O_TMPFILE | os.O_RDWR), "r+b")
 		test_file.write(b"012\n456\n")
 		test_file.flush()
-		mock_file.return_value = os.fdopen(os.dup(test_file.fileno()), "rb")
-		mock_file.return_value.seek(0)
+		mock_file.return_value = open("/proc/self/fd/%d" % test_file.fileno(), "rb")
 		line_count = 0
 
 		with patch("builtins.open", mock_file):
