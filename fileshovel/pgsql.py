@@ -6,11 +6,21 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple
 
 import psycopg2
+from psycopg2.extensions import libpq_version, parse_dsn
 from psycopg2.sql import Identifier, SQL, Literal
 
 from fileshovel.options import FileShovelOptions
 
 log = logging.getLogger("fileshovel.pgsql")
+
+# Applied only where the connection string sets nothing, so a dead server fails instead of hanging.
+CONNECTION_DEFAULTS = {
+	"connect_timeout": 10,
+	"keepalives": 1,
+	"keepalives_idle": 30,
+	"keepalives_interval": 10,
+	"keepalives_count": 3,
+}
 
 # (line, offset, values)
 Row = Tuple[int, int, list]
@@ -51,7 +61,14 @@ class PgLineInserter:
 		self._executor = ThreadPoolExecutor(max_workers=1) if options.pg_threads else None
 
 	def connect_database(self):
-		return psycopg2.connect(self._options.pg_connection_string)
+		dsn = self._options.pg_connection_string
+		given = parse_dsn(dsn)
+		defaults = {k: v for k, v in CONNECTION_DEFAULTS.items() if k not in given}
+
+		if libpq_version() >= 120000 and "tcp_user_timeout" not in given:
+			defaults["tcp_user_timeout"] = 60000
+
+		return psycopg2.connect(dsn, **defaults)
 
 	def get_last_offset_from_database(self) -> int:
 		with self.connect_database() as pg_connection:

@@ -52,6 +52,20 @@ class PrepareRowTest(TestCase):
 				self.assertEqual(len(row), len(inserter.columns))
 
 
+class ConnectTest(TestCase):
+
+	def test_connectionStringSetsTimeout_connect_keepsItAndAddsOthers(self):
+		inserter = make_inserter(make_options(pg_connection_string="host=db connect_timeout=99"))
+
+		with patch("psycopg2.connect") as connect:
+			inserter.connect_database()
+
+		(dsn,), kwargs = connect.call_args
+		self.assertEqual(dsn, "host=db connect_timeout=99")
+		self.assertNotIn("connect_timeout", kwargs)
+		self.assertIn("keepalives_idle", kwargs)
+
+
 class InsertFailureTest(TestCase):
 
 	def _run_main(self, options, rows_before_idle, rows_after_idle, failing_execute):
