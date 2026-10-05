@@ -15,7 +15,7 @@ log = logging.getLogger("fileshovel.lineio")
 
 class TellableLineIO(io.TextIOBase):
 
-	def __init__(self, filename, mode, encoding, skip_lines=0, every_nth=0, watch=False, use_inotify=False,
+	def __init__(self, filename, mode, encoding, skip_lines=0, watch=0, use_inotify=False,
 			regex_search=None, regex_replace: bytes = None, on_idle=None):
 		if 'b' not in mode:
 			mode += 'b'
@@ -31,7 +31,6 @@ class TellableLineIO(io.TextIOBase):
 		self.filename = filename
 		self.mode = mode
 		self.skip_lines = skip_lines
-		self.every_nth = every_nth
 		self.watch = watch
 		self.open_file()
 		self._use_inotify = use_inotify
@@ -59,6 +58,11 @@ class TellableLineIO(io.TextIOBase):
 		self._file.seek(offset)
 		self._resuming = True
 
+	def close(self):
+		if self._file:
+			self._file.close()
+		super().close()
+
 	def tell(self) -> int:
 		return self._file.tell()
 
@@ -82,7 +86,7 @@ class TellableLineIO(io.TextIOBase):
 				notifier.read_events()
 				notifier.process_events()
 		else:
-			time.sleep(int(self.watch))
+			time.sleep(self.watch)
 
 	def _replaced(self) -> bool:
 		try:
@@ -102,7 +106,6 @@ class TellableLineIO(io.TextIOBase):
 				notifier.stop()
 
 	def _read_lines(self, notifier: Optional[Notifier]) -> Iterable[str]:
-		every_nth = self.every_nth
 		regex_search = self.regex_search
 		regex_replace = self.regex_replace
 		current_line = 0
@@ -120,9 +123,6 @@ class TellableLineIO(io.TextIOBase):
 					continue
 
 				current_line += 1
-
-				if every_nth and current_line % every_nth != 0:
-					continue
 
 				if regex_search and regex_replace:
 					line = regex_search.sub(regex_replace, line)

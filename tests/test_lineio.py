@@ -123,33 +123,6 @@ class TellableLineIOTest(TestCase):
 				if t.current_line in [0, 1]:
 					self.assertIn("pine", line, msg="regex conversion has failed")
 
-	def test_10linesFile_skip2andReadEvery2_reads4Lines(self):
-		mock_file = MagicMock()
-		ten_lines = b"""1skip
-		2skip
-		3skip_nth
-		4read
-		5skip_nth
-		6read
-		7skip_nth
-		8read
-		9skip_nth
-		0read
-		"""
-		mock_file.return_value = io.BytesIO(initial_bytes=ten_lines)
-
-		with patch("builtins.open", mock_file):
-			t = TellableLineIO(a_filename, "rb", default_encoding, skip_lines=2, every_nth=2)
-			read_lines = 0
-			last_read = None
-
-			for line in t:
-				read_lines += 1
-				last_read = line
-				self.assertIn("read", line)
-
-			self.assertEqual(read_lines, 4, msg="last line read was %s" % last_read)
-
 	@staticmethod
 	def _twoLinesFileUsingInotify_readWholeFileAddNewLine_readsThirdLine(test_file_name, test_file, content: bytes,
 			stop_at_line: int):

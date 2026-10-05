@@ -12,6 +12,8 @@ from fileshovel.lineio import TellableLineIO
 
 log = logging.getLogger("fileshovel.options")
 
+REMOVED_KEYS = {"csv_date_format", "csv_index_every_nth_line", "date_column", "index_file", "uuid_column"}
+
 
 class ConfigError(Exception):
 	pass
@@ -20,81 +22,78 @@ class ConfigError(Exception):
 class FileShovelOptions:
 	def __init__(self):
 		self.args = argparse.Namespace()
+		self._first_row = None
 		self.parse_args()
 
 		if self.dump_config:
 			self.dump_config_as_yaml(sys.stdout)
 			sys.exit(0)
 
-		self._first_row = self._get_first_row()
-
 	def _get_first_row(self) -> List[str]:
-		reader = self.get_csv_file_reader(for_header=True)
+		csv_file = self.get_csv_file(for_header=True)
 
 		try:
-			line = next(iter(reader))
-			return line
+			for line, _, _ in CsvReader(csv_file, delimiter=self.csv_delimiter):
+				return line
+			raise ConfigError("%s has no header line and no columns are configured" % self.csv_file)
 		finally:
-			reader.csv_file.close()
+			csv_file.close()
 
 	def parse_args(self):
+		config_parser = argparse.ArgumentParser(add_help=False)
+		config_parser.add_argument("-c", "--config", default=None, type=str)
+		config_args, _ = config_parser.parse_known_args()
+
 		parser = argparse.ArgumentParser(
 			prog="fileshovel",
 		)
-		parser.add_argument("-c", "--config", default=None, type=str,
-							help=FileShovelOptions.config.__doc__)
+		dests = set()
 
-		if "--help" not in sys.argv:
-			parser.parse_known_args(namespace=self.args)
+		def add(*names, **kwargs):
+			dests.add(parser.add_argument(*names, **kwargs).dest)
 
-			if self.args.config:
-				self.read_config_from_yaml()
+		add("-c", "--config", default=None, type=str,
+			help=FileShovelOptions.config.__doc__)
+		add("--columns", type=str, default=None,
+			help=FileShovelOptions.columns.__doc__)
+		add("--encoding", type=str, default="UTF-8",
+			help=FileShovelOptions.encoding.__doc__)
+		add("--wait-time", type=float, default=0.0,
+			help=FileShovelOptions.wait_time.__doc__)
+		add("--csv-regex-search", type=str, default=None,
+			help=FileShovelOptions.csv_regex_search.__doc__)
+		add("--csv-regex-replace", type=str, default=None,
+			help=FileShovelOptions.csv_regex_replace.__doc__)
+		add("-d", "--csv-delimiter", type=str, default=",",
+			help=FileShovelOptions.csv_delimiter.__doc__)
+		add("--add-missing-columns", default=False, action="store_true",
+			help=FileShovelOptions.add_missing_columns.__doc__)
+		add("--csv-skip-lines", type=int, default=None,
+			help=FileShovelOptions.csv_skip_lines.__doc__)
+		add("--csv-null-text", type=str, default="null",
+			help=FileShovelOptions.csv_null_text.__doc__)
+		add("--pg-connection-string", type=str)
+		add("--pg-rows-per-commit", type=int, default=1000)
+		add("--pg-schema", type=str)
+		add("--pg-table", type=str)
+		add("--pg-server-name-column", type=str)
+		add("--pg-server-name-value", type=str)
+		add("--pg-csv-offset-column", type=str)
+		add("--pg-csv-line-column", type=str)
+		add("--pg-threads", type=int, default=1,
+			help=FileShovelOptions.pg_threads.__doc__)
+		add("--dump-config", default=False, action="store_true",
+			help=FileShovelOptions.dump_config.__doc__)
+		add("--verbose", "-v", action="count", default=2,
+			help="-v for INFO, -vv for DEBUG; 0 CRITICAL, 1 ERROR, 2 WARNING (default) in YAML.")
+		add("-w", "--watch", default="inotify", type=str,
+			help=FileShovelOptions.watch.__doc__)
+		add("csv_file", type=str,
+			help=FileShovelOptions.csv_file.__doc__)
 
-		parser.add_argument("--columns", type=str, default=None,
-							help=FileShovelOptions.columns.__doc__)
-		parser.add_argument("--date-column", type=str, default=None,
-							help=FileShovelOptions.date_column.__doc__)
-		parser.add_argument("--encoding", type=str, default="UTF-8",
-							help=FileShovelOptions.encoding.__doc__)
-		parser.add_argument("--wait-time", type=float, default=0.0,
-							help=FileShovelOptions.wait_time.__doc__)
-		parser.add_argument("--uuid-column", type=str, default=None,
-							help=FileShovelOptions.uuid_column.__doc__)
-		parser.add_argument("--csv-regex-search", type=str, default=None,
-							help=FileShovelOptions.csv_regex_search.__doc__)
-		parser.add_argument("--csv-regex-replace", type=str, default=None,
-							help=FileShovelOptions.csv_regex_replace.__doc__)
-		parser.add_argument("--csv-date-format", type=str, default="%Y-%m-%d %H:%M:%S",
-							help=FileShovelOptions.csv_date_format.__doc__)
-		parser.add_argument("-d", "--csv-delimiter", type=str, default=",",
-							help=FileShovelOptions.csv_delimiter.__doc__)
-		parser.add_argument("--csv-index-every-nth-line", type=int, default=None,
-							help=FileShovelOptions.csv_index_every_nth_line.__doc__)
-		parser.add_argument("--add-missing-columns", type=bool, default=False,
-							help=FileShovelOptions.add_missing_columns.__doc__)
-		parser.add_argument("--csv-skip-lines", type=int, default=None,
-							help=FileShovelOptions.csv_skip_lines.__doc__)
-		parser.add_argument("--csv-null-text", type=str, default="null",
-							help=FileShovelOptions.csv_null_text.__doc__)
-		parser.add_argument("--pg-connection-string", type=str)
-		parser.add_argument("--pg-rows-per-commit", type=int, default=1000)
-		parser.add_argument("--pg-schema", type=str)
-		parser.add_argument("--pg-table", type=str)
-		parser.add_argument("--pg-server-name-column", type=str)
-		parser.add_argument("--pg-server-name-value", type=str)
-		parser.add_argument("--pg-csv-offset-column", type=str)
-		parser.add_argument("--pg-csv-line-column", type=str)
-		parser.add_argument("--pg-threads", type=int, default=1)
-		parser.add_argument("--dump-config", default=False, action="store_true",
-							help=FileShovelOptions.dump_config.__doc__)
-		parser.add_argument("--verbose", "-v", action="count", default=2,
-							help="-v for INFO, -vv for DEBUG; 0 CRITICAL, 1 ERROR, 2 WARNING (default) in YAML.")
-		parser.add_argument("-i", "--index-file", default=None, type=str,
-							help=FileShovelOptions.index_file.__doc__)
-		parser.add_argument("-w", "--watch", default="inotify", type=str,
-							help=FileShovelOptions.watch.__doc__)
-		parser.add_argument("csv_file", type=str,
-							help=FileShovelOptions.csv_file.__doc__)
+		if config_args.config:
+			parser.set_defaults(**self.read_config_from_yaml(config_args.config, dests))
+
 		parser.parse_args(namespace=self.args)
 
 	@property
@@ -107,13 +106,22 @@ class FileShovelOptions:
 		"""dump a YAML configuration file of selected options"""
 		return self.args.dump_config
 
-	def read_config_from_yaml(self):
-		if self.config:
-			from ruamel.yaml import YAML
-			yaml_config = YAML(typ="safe").load(open(self.config, "r"))
-			for key in yaml_config:
-				if hasattr(self.args, key) is False:
-					setattr(self.args, key, yaml_config[key])
+	@staticmethod
+	def read_config_from_yaml(path: str, dests: set) -> dict:
+		from ruamel.yaml import YAML
+
+		with open(path, "r") as config_file:
+			yaml_config = YAML(typ="safe").load(config_file)
+
+		for key in sorted(set(yaml_config) & REMOVED_KEYS):
+			log.warning("ignoring removed option %s in %s", key, path)
+			del yaml_config[key]
+
+		unknown = sorted(set(yaml_config) - dests)
+		if unknown:
+			raise ConfigError("unknown options in %s: %s" % (path, ", ".join(unknown)))
+
+		return yaml_config
 
 	def dump_config_as_yaml(self, output: TextIO):
 		config_keys = (x for x in dir(self.args) if x[0] != "_")
@@ -141,19 +149,6 @@ class FileShovelOptions:
 			return self.header
 
 	@property
-	def date_column(self) -> int:
-		"""column to index for date, default is first column"""
-		if self.args.date_column is None:
-			return 0
-		else:
-			return self.columns.index(self.args.date_column) - 1
-
-	@property
-	def date_column_name(self) -> str:
-		"""date column as string"""
-		return self.args.date_column
-
-	@property
 	def encoding(self) -> str:
 		"""encoding used to read CSV file"""
 		return self.args.encoding
@@ -165,19 +160,26 @@ class FileShovelOptions:
 
 	@property
 	def header(self) -> List[str]:
-		assert self._first_row is not None
+		if self._first_row is None:
+			self._first_row = self._get_first_row()
 		return self._first_row
 
 	@property
 	def watch(self) -> str:
-		"""wait for changes --wait=no|inotify|[delay in seconds]"""
+		"""wait for changes --watch=no|inotify|[delay in seconds]"""
 		return self.args.watch
 
 	@property
-	def uuid_column(self) -> Optional[int]:
-		"""column to index for uuid, default is None"""
-		if self.args.uuid_column:
-			return self.columns.index(self.args.uuid_column) - 1
+	def watch_delay(self) -> float:
+		"""seconds between polls, 0 when not watching"""
+		if self.watch in ("no", "0", "false"):
+			return 0
+		if self.watch == "inotify":
+			return 1
+		try:
+			return float(self.watch)
+		except ValueError:
+			raise ConfigError("watch must be no, inotify or a delay in seconds, not %r" % self.watch) from None
 
 	@property
 	def csv_regex_search(self):
@@ -191,20 +193,9 @@ class FileShovelOptions:
 		return self.args.csv_regex_replace
 
 	@property
-	def csv_date_format(self) -> str:
-		"""date format string according to strptime:
-		https://docs.python.org/3/library/datetime.html#strftime-and-strptime-format-codes"""
-		return self.args.csv_date_format
-
-	@property
 	def csv_delimiter(self) -> str:
 		"""delimiter character between fields"""
 		return self.args.csv_delimiter
-
-	@property
-	def csv_index_every_nth_line(self) -> Optional[int]:
-		"""index the CSV file storing an offset every nth lines"""
-		return self.args.csv_index_every_nth_line
 
 	@property
 	def csv_null_text(self) -> str:
@@ -259,7 +250,7 @@ class FileShovelOptions:
 
 	@property
 	def pg_csv_line_column(self) -> str:
-		"""column in --pg-table to store CSV current line as int"""
+		"""column in --pg-table to store the CSV line, counted from where reading started"""
 		return self.args.pg_csv_line_column
 
 	@property
@@ -274,31 +265,22 @@ class FileShovelOptions:
 		"""CSV filename to follow"""
 		return self.args.csv_file
 
-	@property
-	def index_file(self) -> str:
-		"""index file, default is CSV_FILE.index"""
-		if self.args.index_file is None:
-			return self.args.csv_file + ".index"
-		else:
-			return self.args.index_file
-
 	def get_csv_file(self, for_header=False, on_idle=None) -> TellableLineIO:
 		return TellableLineIO(
 			self.args.csv_file,
 			"r",
 			self.encoding,
-			self.csv_skip_lines if for_header is False else 0,
-			self.csv_index_every_nth_line,
-			watch=self.watch not in ("no", "0", "false"),
+			0 if for_header else self.csv_skip_lines,
+			watch=0 if for_header else self.watch_delay,
 			use_inotify=self.watch == "inotify",
 			regex_search=self.csv_regex_search,
 			regex_replace=bytes(self.csv_regex_replace, self.encoding) if self.csv_regex_replace else None,
 			on_idle=on_idle,
 		)
 
-	def get_csv_file_reader(self, for_header=False, last_offset=0, on_idle=None):
+	def get_csv_file_reader(self, last_offset=0, on_idle=None):
 		return CsvReader(
-			self.get_csv_file(for_header, on_idle),
+			self.get_csv_file(on_idle=on_idle),
 			last_offset=last_offset,
 			delimiter=self.csv_delimiter,
 		)
