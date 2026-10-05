@@ -9,14 +9,8 @@ log = logging.getLogger("fileshovel.main")
 
 def main():
 	args = FileShovelOptions()
-	log_level = {
-		0: logging.CRITICAL,
-		1: logging.ERROR,
-		2: logging.WARN,
-		3: logging.INFO,
-		4: logging.DEBUG,
-	}.get(args.verbose)
-	logging.basicConfig(level=log_level)
+	log_levels = [logging.CRITICAL, logging.ERROR, logging.WARNING, logging.INFO, logging.DEBUG]
+	logging.basicConfig(level=log_levels[max(0, min(args.verbose, len(log_levels) - 1))])
 	index = PgLineInserter(args)
 	offset = index.get_last_offset_from_database()
 	reader = args.get_csv_file_reader(last_offset=offset)

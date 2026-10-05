@@ -83,8 +83,8 @@ class FileShovelOptions:
 		parser.add_argument("--pg-threads", type=int, default=1)
 		parser.add_argument("--dump-config", default=False, action="store_true",
 							help=FileShovelOptions.dump_config.__doc__)
-		parser.add_argument("--verbose", "-v", action="count", default=0,
-							help="Increase verbosity, add up to 5 -v.")
+		parser.add_argument("--verbose", "-v", action="count", default=2,
+							help="-v for INFO, -vv for DEBUG; 0 CRITICAL, 1 ERROR, 2 WARNING (default) in YAML.")
 		parser.add_argument("-i", "--index-file", default=None, type=str,
 							help=FileShovelOptions.index_file.__doc__)
 		parser.add_argument("-w", "--watch", default="inotify", type=str,
