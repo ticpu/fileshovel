@@ -15,7 +15,13 @@ class CsvReader:
 		"""Wrapper around 'csv.reader' to iterate over line and offset."""
 		self.csv_file = csv_file
 
-		if last_offset > 0:
+		if last_offset == 0:
+			log.info("no rows in database, reading %s from the start", csv_file.filename)
+		elif last_offset > csv_file.get_size():
+			log.warning("resume offset %d is beyond the size of %s (%d), assuming rotation and reading from the start",
+				last_offset, csv_file.filename, csv_file.get_size())
+		else:
+			log.info("resuming %s after offset %d", csv_file.filename, last_offset)
 			self.csv_file.skip_lines = 0
 			self.csv_file.seek(last_offset)
 

@@ -71,33 +71,17 @@ class PgLineInserter:
 		return psycopg2.connect(dsn, **defaults)
 
 	def get_last_offset_from_database(self) -> int:
-		with self.connect_database() as pg_connection:
-			c = pg_connection.cursor()
+		sql = SQL("SELECT coalesce(max({0}), 0) FROM {1}").format(self.offset_column, self.table)
 
-			if self.server_name_column:
-				sql = SQL("SELECT {0} FROM {1} WHERE {2}={3} ORDER BY {4} DESC LIMIT 1").format(
-					self.offset_column,
-					self.table,
-					self.server_name_column,
-					Literal(self.server_name_value),
-					self.offset_column,
-				)
-			else:
-				sql = SQL("SELECT {0} FROM {1} ORDER BY {2} DESC LIMIT 1").format(
-					self.offset_column,
-					self.table,
-					self.offset_column,
-				)
+		if self.server_name_column:
+			sql += SQL(" WHERE {0}={1}").format(self.server_name_column, Literal(self.server_name_value))
 
-			sql = sql.as_string(pg_connection)
-			c.execute(sql)
+		with self._connection.cursor() as cursor:
+			cursor.execute(sql)
+			offset, = cursor.fetchone()
 
-			if c.rowcount == 0:
-				ret = 0
-			else:
-				ret = next(c)[0]
-
-			return ret
+		self._connection.commit()
+		return offset
 
 	def add_row(self, line: list, current_line: int, current_line_offset: int):
 		try:
@@ -175,11 +159,16 @@ class PgLineInserter:
 		try:
 			with self._connection.cursor() as cursor:
 				cursor.execute(sql)
+				inserted = cursor.rowcount
 			self._connection.commit()
 		except psycopg2.Error as e:
 			raise InsertError("insert into %s failed for offsets %d-%d, lines %d-%d: %s" % (
 				self.table_name, first_offset, last_offset, first_line, last_line, describe_error(e),
 			)) from None
+
+		if inserted < len(batch):
+			log.warning("%d of %d rows at offsets %d-%d already in %s, dropped by ON CONFLICT",
+				len(batch) - inserted, len(batch), first_offset, last_offset, self.table_name)
 
 		log.info("committed %d rows, offsets %d-%d, lines %d-%d", len(batch), first_offset, last_offset, first_line, last_line)
 		time.sleep(self._options.wait_time)

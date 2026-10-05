@@ -66,6 +66,19 @@ class ConnectTest(TestCase):
 		self.assertIn("keepalives_idle", kwargs)
 
 
+class ConflictTest(TestCase):
+
+	def test_someRowsAlreadyPresent_insertBatch_warnsWithCount(self):
+		inserter = make_inserter(make_options())
+		inserter._connection.cursor.return_value.__enter__.return_value.rowcount = 7
+		batch = [(i + 1, i * 10, ["x", "y", i * 10]) for i in range(10)]
+
+		with self.assertLogs("fileshovel.pgsql", "WARNING") as logs:
+			inserter._insert_batch(batch)
+
+		self.assertIn("3 of 10 rows at offsets 0-90", logs.output[0])
+
+
 class InsertFailureTest(TestCase):
 
 	def _run_main(self, options, rows_before_idle, rows_after_idle, failing_execute):
@@ -77,7 +90,9 @@ class InsertFailureTest(TestCase):
 
 		options.get_csv_file_reader = reader
 		connection = MagicMock()
-		execute = connection.cursor.return_value.__enter__.return_value.execute
+		cursor = connection.cursor.return_value.__enter__.return_value
+		cursor.rowcount = options.pg_rows_per_commit
+		execute = cursor.execute
 		calls = []
 
 		def fake_execute(sql):

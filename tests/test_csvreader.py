@@ -2,8 +2,9 @@
 # vim:set noet ts=4 sw=4 fenc=utf-8 ff=unix ft=python:
 import csv
 import io
+import os
 from unittest import TestCase
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from fileshovel.csvreader import CsvReader
 from fileshovel.lineio import TellableLineIO
@@ -46,3 +47,25 @@ class CsvReaderTest(TestCase):
 		self.assertEqual(len(rows), 2)
 		self.assertIn("�", rows[0][0])
 		self.assertEqual(rows[1], ["row", "two", "three"])
+
+
+def read_all(content: bytes, last_offset: int, skip_lines: int):
+	with os.fdopen(os.open(os.path.dirname(__file__), os.O_TMPFILE | os.O_RDWR), "r+b") as f:
+		f.write(content)
+		f.seek(0)
+
+		with patch("builtins.open", MagicMock(return_value=f)):
+			csv_file = TellableLineIO(a_filename, "rb", default_encoding, skip_lines=skip_lines)
+			return [line for line, _, _ in CsvReader(csv_file, last_offset=last_offset)]
+
+
+class CsvReaderResumeTest(TestCase):
+
+	def test_offsetOfLastInsertedRow_resume_readsFollowingRows(self):
+		rows = read_all(b"h1,h2\na,1\nb,2\nc,3\n", last_offset=len(b"h1,h2\na,1\n"), skip_lines=1)
+		self.assertEqual(rows, [["c", "3"]])
+
+	def test_offsetBeyondFileSize_resume_readsFromStartSkippingHeader(self):
+		with self.assertLogs("fileshovel.csvreader", "WARNING"):
+			rows = read_all(b"h1,h2\na,1\n", last_offset=1000, skip_lines=1)
+		self.assertEqual(rows, [["a", "1"]])
