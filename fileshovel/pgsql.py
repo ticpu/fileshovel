@@ -2,6 +2,7 @@
 # vim:set noet ts=4 sw=4 fenc=utf-8 ff=unix ft=python:
 import logging
 import time
+from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple
 
@@ -24,6 +25,8 @@ CONNECTION_DEFAULTS = {
 
 # (line, offset, values)
 Row = Tuple[int, int, list]
+# (start index of each value in the statement, (row index, column index) of each value)
+ValueMap = Tuple[List[int], List[Tuple[int, int]]]
 
 
 class InsertError(Exception):
@@ -34,19 +37,21 @@ class PgLineInserter:
 
 	def __init__(self, options: FileShovelOptions):
 		self._options = options
-		self.server_name_column = options.pg_server_name_column
+		self.server_name_column = None
 		self.server_name_value = options.pg_server_name_value
 		self.offset_column = Identifier(options.pg_csv_offset_column)
-		self.extra_columns = [self.offset_column]
+		extra_names = [options.pg_csv_offset_column]
 
 		if options.pg_csv_line_column:
-			self.extra_columns.append(Identifier(options.pg_csv_line_column))
+			extra_names.append(options.pg_csv_line_column)
 
-		if self.server_name_column and self.server_name_value:
-			self.server_name_column = Identifier(self.server_name_column)
-			self.extra_columns.append(self.server_name_column)
+		if options.pg_server_name_column and self.server_name_value:
+			self.server_name_column = Identifier(options.pg_server_name_column)
+			extra_names.append(options.pg_server_name_column)
 
-		self.columns = [Identifier(x) for x in options.columns] + self.extra_columns
+		self.extra_columns = [Identifier(x) for x in extra_names]
+		self.column_names = list(options.columns) + extra_names
+		self.columns = [Identifier(x) for x in self.column_names]
 
 		if options.pg_schema:
 			self.table = SQL(".").join([Identifier(options.pg_schema), Identifier(options.pg_table)])
@@ -147,14 +152,7 @@ class PgLineInserter:
 	def _insert_batch(self, batch: List[Row]):
 		first_line, first_offset, _ = batch[0]
 		last_line, last_offset, _ = batch[-1]
-		values = SQL(",").join(
-			SQL("(") + SQL(",").join(Literal(x) for x in row) + SQL(")") for _, _, row in batch
-		)
-		sql = SQL("INSERT INTO {0} ({1}) VALUES {2} ON CONFLICT DO NOTHING").format(
-			self.table,
-			SQL(",").join(self.columns),
-			values,
-		)
+		sql, value_map = self._render_insert(batch)
 
 		try:
 			with self._connection.cursor() as cursor:
@@ -162,8 +160,9 @@ class PgLineInserter:
 				inserted = cursor.rowcount
 			self._connection.commit()
 		except psycopg2.Error as e:
-			raise InsertError("insert into %s failed for offsets %d-%d, lines %d-%d: %s" % (
+			raise InsertError("insert into %s failed for offsets %d-%d, lines %d-%d: %s%s" % (
 				self.table_name, first_offset, last_offset, first_line, last_line, describe_error(e),
+				self._locate_value(e, batch, value_map),
 			)) from None
 
 		if inserted < len(batch):
@@ -172,6 +171,51 @@ class PgLineInserter:
 
 		log.info("committed %d rows, offsets %d-%d, lines %d-%d", len(batch), first_offset, last_offset, first_line, last_line)
 		time.sleep(self._options.wait_time)
+
+	def _render_insert(self, batch: List[Row]) -> Tuple[str, ValueMap]:
+		"""Render the statement and where each value starts in it."""
+		head = SQL("INSERT INTO {0} ({1}) VALUES ").format(self.table, SQL(",").join(self.columns))
+		pieces = [head.as_string(self._connection)]
+		position = len(pieces[0])
+		starts, cells = [], []
+
+		for row_index, (_, _, row) in enumerate(batch):
+			for column_index, value in enumerate(row):
+				if column_index:
+					separator = ","
+				else:
+					separator = ",(" if row_index else "("
+
+				literal = Literal(value).as_string(self._connection)
+				position += len(separator)
+				starts.append(position)
+				cells.append((row_index, column_index))
+				pieces += [separator, literal]
+				position += len(literal)
+
+			pieces.append(")")
+			position += 1
+
+		pieces.append(" ON CONFLICT DO NOTHING")
+		return "".join(pieces), (starts, cells)
+
+	def _locate_value(self, e: psycopg2.Error, batch: List[Row], value_map: ValueMap) -> str:
+		"""Name the row and column of a rejected literal from the server's error position."""
+		starts, cells = value_map
+		if not e.diag.statement_position:
+			return ""
+
+		index = bisect_right(starts, int(e.diag.statement_position) - 1) - 1
+		if index < 0:
+			return ""
+
+		row_index, column_index = cells[index]
+		line, offset, _ = batch[row_index]
+		if column_index < len(self.column_names):
+			column = "column %s" % self.column_names[column_index]
+		else:
+			column = "value %d of %d columns" % (column_index + 1, len(self.column_names))
+		return ", row at offset %d, line %d, %s" % (offset, line, column)
 
 
 def describe_error(e: psycopg2.Error) -> str:
