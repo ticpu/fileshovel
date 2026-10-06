@@ -9,6 +9,10 @@ from fileshovel.lineio import TellableLineIO
 log = logging.getLogger("fileshovel.csvreader")
 
 
+class RecordError(Exception):
+	pass
+
+
 class CsvReader:
 
 	def __init__(self, csv_file: TellableLineIO, last_offset=0, *args, **kwargs):
@@ -35,8 +39,8 @@ class CsvReader:
 			except StopIteration:
 				return
 			except csv.Error as e:
-				log.warning("csv parse error at line %d offset %d: %s; skipping record",
-						csv_file.current_line, csv_file.current_line_offset, e)
-				continue
+				raise RecordError("unparseable CSV record at line %d, offset %d of %s: %s" % (
+					csv_file.current_line, csv_file.current_line_offset, csv_file.filename, e,
+				)) from None
 
 			yield line, csv_file.current_line, csv_file.current_line_offset

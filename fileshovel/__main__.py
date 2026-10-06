@@ -2,6 +2,7 @@
 import logging
 import sys
 
+from fileshovel.csvreader import RecordError
 from fileshovel.pgsql import InsertError, PgLineInserter
 from fileshovel.options import ConfigError, FileShovelOptions
 
@@ -23,7 +24,7 @@ def main() -> int:
 
 		index.flush()
 
-	except (ConfigError, InsertError) as e:
+	except (ConfigError, InsertError, RecordError) as e:
 		log.error("%s", e)
 		return 1
 	except KeyboardInterrupt:

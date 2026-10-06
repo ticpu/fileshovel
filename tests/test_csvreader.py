@@ -6,7 +6,7 @@ import os
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from fileshovel.csvreader import CsvReader
+from fileshovel.csvreader import CsvReader, RecordError
 from fileshovel.lineio import TellableLineIO
 
 a_filename = "/nonexistent/file.csv"
@@ -27,18 +27,20 @@ class CsvReaderTest(TestCase):
 		rows = [row for row, _line, _offset in reader]
 		self.assertEqual(rows, [["a", "b", "c"], ["1", "2", "3"], ["4", "5", "6"]])
 
-	def test_malformedRecord_iterate_skipsBadRecordAndContinues(self):
+	def test_malformedRecord_iterate_stopsNamingLineAndOffset(self):
 		original_limit = csv.field_size_limit()
 		csv.field_size_limit(64)
+		rows = []
 		try:
 			huge_field = b"x" * 256
 			content = b"a,b\n1,2\n" + huge_field + b",bad\n3,4\n"
-			reader = self._reader_for(content)
-			rows = [row for row, _line, _offset in reader]
+			with self.assertRaisesRegex(RecordError, "line 3, offset 8 "):
+				for row, _line, _offset in self._reader_for(content):
+					rows.append(row)
 		finally:
 			csv.field_size_limit(original_limit)
 
-		self.assertEqual(rows, [["a", "b"], ["1", "2"], ["3", "4"]])
+		self.assertEqual(rows, [["a", "b"], ["1", "2"]])
 
 	def test_badUtf8InQuotedField_iterate_doesNotRaise(self):
 		content = b'"Salle Conf\xc3","8194998499","public"\n"row","two","three"\n'
