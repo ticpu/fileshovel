@@ -13,7 +13,7 @@ def read(fname):
 
 setup(
 	name="fileshovel",
-	version="0.1",
+	version="1.1",
 	author="Jérôme Poulin",
 	author_email="jeromepoulin@gmail.com",
 	license="GPL-3",

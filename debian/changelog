@@ -1,3 +1,23 @@
+fileshovel (1.1) unstable; urgency=medium
+
+  * A failed insert exits 1 with one ERROR line naming the table, the
+    batch's offsets and lines, the error class and SQLSTATE, and for
+    rejected input the row and column; the rejected value is not logged.
+    Previously the reader hung forever and systemd never restarted it.
+  * An unparseable CSV record exits 1 with its line and offset; bytes
+    invalid in the configured encoding become U+FFFD with a warning.
+  * Default log level is WARNING; verbose keeps its scale (3 = INFO).
+  * Database connections get connect timeout and TCP keepalives unless
+    the connection string sets them.
+  * The resume offset is logged; rows dropped by ON CONFLICT are counted.
+  * File rotation is detected by inode, the old file is drained first,
+    and partial lines are no longer lost.
+  * pg_threads accepts only 0 or 1; unknown YAML keys are refused;
+    indexer options are removed and ignored with a warning.
+  * The line number is stored only when a line column is configured.
+
+ -- Jérôme Poulin <jeromepoulin@gmail.com>  Mon, 05 Oct 2026 20:44:20 -0400
+
 fileshovel (1.0) unstable; urgency=medium
 
   * Initial release.
